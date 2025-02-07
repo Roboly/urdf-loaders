@@ -40,101 +40,129 @@
     <div id="status">Connecting to robot...</div>
 
     <script>
+      // Connect to the Flask Socket.IO server
       var socket = io.connect('http://' + document.domain + ':' + location.port);
-      socket.on('connect', () => {
-          console.log("Connected to WebSocket server");
+
+      // We'll store the current known joint angles here
+      let localJoints = {};
+
+      // A flag to indicate "we are about to programmatically set the slider values,"
+      // so do NOT re-emit them. This avoids the feedback loop.
+      let ignoreProgrammaticUpdates = false;
+
+      // (1) If the server ever sends the full state (optional):
+      socket.on('joint_states', (data) => {
+        console.log('Received full joint states:', data);
+        const newJoints = {};
+        data.name.forEach((name, index) => {
+          newJoints[name] = data.position[index];
+        });
+        localJoints = newJoints;
+        updateControls(localJoints);
       });
-      const controlsDiv = document.getElementById('controls');
-      const statusDiv = document.getElementById('status');
 
-      // Create or update slider controls
+      // (2) If the server sends a single-joint update, update just that joint locally
+      socket.on('update_joint', (data) => {
+        console.log("Single joint update received:", data);
+        const { jointName, angle } = data;
+        // Merge into our local store
+        localJoints[jointName] = angle;
+        // Update just that one slider (or re-draw everything if you prefer)
+        updateSingleControl(jointName, angle);
+      });
+
+      /**
+       * Creates or updates exactly one slider. 
+       * 
+       * If the slider does not exist, we create it and attach user-driven event listeners
+       * that will emit to the server.
+       * 
+       * If the slider already exists, we programmatically set its value (and skip re-emitting).
+       */
+      function updateSingleControl(jointName, angle) {
+        // Check if there's an existing container for this joint
+        let container = document.getElementById(`joint-${jointName}`);
+
+        if (!container) {
+          // Create a new container (first time we see this joint)
+          container = document.createElement('div');
+          container.className = 'joint-container';
+          container.id = `joint-${jointName}`;
+          container.innerHTML = `
+            <div class="joint-slider">
+              <span class="joint-name">${jointName}</span>
+              <input type="range" min="-6.28" max="6.28" step="0.01" value="${angle}">
+              <input type="number" class="joint-value" step="0.01" value="${angle.toFixed(2)}">
+            </div>
+          `;
+          document.getElementById("controls").appendChild(container);
+
+          // Grab references to the inputs
+          const rangeInput = container.querySelector('input[type="range"]');
+          const numberInput = container.querySelector('input[type="number"]');
+
+          // ============== USER-DRIVEN EVENTS ==============
+          // We only emit if the user physically moves the slider or edits the number.
+          // Check `ignoreProgrammaticUpdates` so we skip if set from code.
+
+          // Slider input
+          rangeInput.addEventListener('input', (e) => {
+            if (ignoreProgrammaticUpdates) return; // skip re-emitting
+            const val = parseFloat(e.target.value);
+            numberInput.value = val.toFixed(2);
+            localJoints[jointName] = val;
+            // Emit single-joint to server
+            socket.emit('update_joint', {
+              jointName: jointName,
+              angle: val
+            });
+          });
+
+          // Number input
+          numberInput.addEventListener('change', (e) => {
+            if (ignoreProgrammaticUpdates) return; // skip re-emitting
+            const val = parseFloat(e.target.value);
+            rangeInput.value = val;
+            localJoints[jointName] = val;
+            // Emit single-joint to server
+            socket.emit('update_joint', {
+              jointName: jointName,
+              angle: val
+            });
+          });
+        }
+
+        // Whether we just created it or it already existed, let's now 
+        // programmatically set the slider & number to the new angle from the server
+        // without re-broadcasting.
+        const rangeInput = container.querySelector('input[type="range"]');
+        const numberInput = container.querySelector('input[type="number"]');
+
+        ignoreProgrammaticUpdates = true;  // SET FLAG
+        rangeInput.value = angle;
+        numberInput.value = angle.toFixed(2);
+        ignoreProgrammaticUpdates = false; // UNSET FLAG
+      }
+
+      /**
+       * If you ever need to refresh the entire set from scratch (e.g. after a full-state),
+       * call this.
+       */
       function updateControls(jointStates) {
-        statusDiv.textContent = `Connected - Controlling ${Object.keys(jointStates).length} joints`;
-        
-        // Create controls for each joint
-        Object.entries(jointStates).forEach(([jointName, position]) => {
-          let container = document.getElementById(`joint-${jointName}`);
-          
-          if (!container) {
-            container = document.createElement('div');
-            container.className = 'joint-container';
-            container.id = `joint-${jointName}`;
-            container.innerHTML = `
-              <div class="joint-slider">
-                <span class="joint-name">${jointName}</span>
-                <input type="range" 
-                       min="-6.28" 
-                       max="6.28" 
-                       step="0.01" 
-                       value="${position}">
-                <input type="number" 
-                       class="joint-value" 
-                       step="0.01" 
-                       value="${position.toFixed(2)}">
-              </div>
-            `;
-            controlsDiv.appendChild(container);
-
-            // Add real-time input handlers
-            const slider = container.querySelector('input[type="range"]');
-            const numberInput = container.querySelector('input[type="number"]');
-            
-            const updateJoint = (value) => {
-              const floatValue = parseFloat(value);
-              if (!isNaN(floatValue)) {
-                socket.emit('update_joint', {
-                  jointName: jointName,
-                  angle: floatValue
-                });
-              }
-            };
-
-            slider.addEventListener('input', (e) => {
-              numberInput.value = parseFloat(e.target.value).toFixed(2);
-              updateJoint(e.target.value);
-            });
-
-            numberInput.addEventListener('change', (e) => {
-              slider.value = e.target.value;
-              updateJoint(e.target.value);
-            });
-          } else {
-            // Update existing controls
-            const slider = container.querySelector('input[type="range"]');
-            const numberInput = container.querySelector('input[type="number"]');
-            
-            if (document.activeElement !== slider) {
-              slider.value = position;
-            }
-            if (document.activeElement !== numberInput) {
-              numberInput.value = position.toFixed(2);
-            }
-          }
+        Object.entries(jointStates).forEach(([name, angle]) => {
+          updateSingleControl(name, angle);
         });
       }
 
-      // Socket.IO handlers
       socket.on('connect', () => {
-        console.log('Connected to server');
-      });
-
-      socket.on('joint_states', (data) => {
-        console.log('Received joint states:', data);
-        const joints = {};
-        data.name.forEach((name, index) => {
-          joints[name] = data.position[index];
-        });
-        updateControls(joints);
-      });
-
-      socket.on('server_joints_update', (joints) => {
-        console.log('Server joint update:', joints);
-        updateControls(joints);
+        console.log("Connected to the server");
+        document.getElementById('status').textContent = "Connected to robot...";
       });
 
       socket.on('disconnect', () => {
-        statusDiv.textContent = 'Connection lost - Reconnecting...';
+        document.getElementById('status').textContent = "Disconnected, attempting reconnect...";
       });
     </script>
   </body>
 </html>
+
