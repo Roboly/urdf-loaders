@@ -6,6 +6,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import URDFManipulator from '../../src/urdf-manipulator-element.js';
+import { io } from 'socket.io-client';
+import SocketIOController from '../../src/ws-controller.js';
 
 customElements.define('urdf-viewer', URDFManipulator);
 
@@ -363,7 +365,8 @@ const updateList = () => {
 updateList();
 
 document.addEventListener('WebComponentsReady', () => {
-
+    const wsCtrl = new SocketIOController('http://localhost:5000', viewer);
+    
     animToggle.addEventListener('click', () => animToggle.classList.toggle('checked'));
 
     // stop the animation if user tried to manipulate the model

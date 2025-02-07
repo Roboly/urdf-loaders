@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+  <head>
+    <title>URDF Joint Control</title>
+    <style>
+      .joint-container {
+        margin: 10px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        max-width: 600px;
+      }
+      .joint-slider {
+        margin: 15px 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .joint-name {
+        width: 120px;
+        font-family: monospace;
+      }
+      input[type="range"] {
+        flex-grow: 1;
+      }
+      .joint-value {
+        width: 80px;
+        text-align: right;
+      }
+      #status {
+        margin-top: 20px;
+        color: #666;
+      }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.min.js"></script>
+  </head>
+  <body>
+    <h1>URDF Joint Controller</h1>
+    <div id="controls"></div>
+    <div id="status">Connecting to robot...</div>
+
+    <script>
+      var socket = io.connect('http://' + document.domain + ':' + location.port);
+      socket.on('connect', () => {
+          console.log("Connected to WebSocket server");
+      });
+      const controlsDiv = document.getElementById('controls');
+      const statusDiv = document.getElementById('status');
+
+      // Create or update slider controls
+      function updateControls(jointStates) {
+        statusDiv.textContent = `Connected - Controlling ${Object.keys(jointStates).length} joints`;
+        
+        // Create controls for each joint
+        Object.entries(jointStates).forEach(([jointName, position]) => {
+          let container = document.getElementById(`joint-${jointName}`);
+          
+          if (!container) {
+            container = document.createElement('div');
+            container.className = 'joint-container';
+            container.id = `joint-${jointName}`;
+            container.innerHTML = `
+              <div class="joint-slider">
+                <span class="joint-name">${jointName}</span>
+                <input type="range" 
+                       min="-6.28" 
+                       max="6.28" 
+                       step="0.01" 
+                       value="${position}">
+                <input type="number" 
+                       class="joint-value" 
+                       step="0.01" 
+                       value="${position.toFixed(2)}">
+              </div>
+            `;
+            controlsDiv.appendChild(container);
+
+            // Add real-time input handlers
+            const slider = container.querySelector('input[type="range"]');
+            const numberInput = container.querySelector('input[type="number"]');
+            
+            const updateJoint = (value) => {
+              const floatValue = parseFloat(value);
+              if (!isNaN(floatValue)) {
+                socket.emit('update_joint', {
+                  jointName: jointName,
+                  angle: floatValue
+                });
+              }
+            };
+
+            slider.addEventListener('input', (e) => {
+              numberInput.value = parseFloat(e.target.value).toFixed(2);
+              updateJoint(e.target.value);
+            });
+
+            numberInput.addEventListener('change', (e) => {
+              slider.value = e.target.value;
+              updateJoint(e.target.value);
+            });
+          } else {
+            // Update existing controls
+            const slider = container.querySelector('input[type="range"]');
+            const numberInput = container.querySelector('input[type="number"]');
+            
+            if (document.activeElement !== slider) {
+              slider.value = position;
+            }
+            if (document.activeElement !== numberInput) {
+              numberInput.value = position.toFixed(2);
+            }
+          }
+        });
+      }
+
+      // Socket.IO handlers
+      socket.on('connect', () => {
+        console.log('Connected to server');
+      });
+
+      socket.on('joint_states', (data) => {
+        console.log('Received joint states:', data);
+        const joints = {};
+        data.name.forEach((name, index) => {
+          joints[name] = data.position[index];
+        });
+        updateControls(joints);
+      });
+
+      socket.on('server_joints_update', (joints) => {
+        console.log('Server joint update:', joints);
+        updateControls(joints);
+      });
+
+      socket.on('disconnect', () => {
+        statusDiv.textContent = 'Connection lost - Reconnecting...';
+      });
+    </script>
+  </body>
+</html>
