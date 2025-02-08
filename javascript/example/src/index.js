@@ -28,6 +28,8 @@ const animToggle = document.getElementById('do-animate');
 const hideFixedToggle = document.getElementById('hide-fixed');
 const DEG2RAD = Math.PI / 180;
 const RAD2DEG = 1 / DEG2RAD;
+const DEBOUNCE_MS = 15; // Short wait to group simultaneous changes (e.g., user drags multiple joints quickly).
+const THROTTLE_ALL_JOINTS_MS = 1; // For full-joint updates, max 1000 Hz => ~1 ms minimum interval
 let sliders = {};
 
 // Global Functions
@@ -365,7 +367,7 @@ const updateList = () => {
 updateList();
 
 document.addEventListener('WebComponentsReady', () => {
-    const wsCtrl = new SocketIOController('http://localhost:5000', viewer);
+    const wsCtrl = new SocketIOController('http://localhost:5000', viewer, DEBOUNCE_MS, THROTTLE_ALL_JOINTS_MS);
     
     animToggle.addEventListener('click', () => animToggle.classList.toggle('checked'));
 
